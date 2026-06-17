@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nostr Long-Form Reader</title>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #18181f;
+      --surface-2: #23232d;
+      --text: #f2f2f5;
+      --muted: #a0a0b0;
+      --accent: #8b5cf6;
+      --accent-2: #06b6d4;
+      --border: #2a2a35;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      padding: 2rem 1rem 1rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(139,92,246,0.12) 0%, transparent 100%);
+    }
+
+    header h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.75rem;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f59e0b;
+      animation: pulse 1.5s infinite;
+    }
+
+    .status-dot.connected { background: #22c55e; animation: none; }
+    .status-dot.error { background: #ef4444; animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 3rem;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .controls > div {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .mode-toggle {
+      display: inline-flex;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .mode-toggle button {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 0.45rem 1rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+
+    .mode-toggle button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .mode-toggle button:not(.active):hover {
+      color: var(--text);
+    }
+
+    .hashtags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .hashtag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.7rem;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.85rem;
+      transition: 0.15s;
+    }
+
+    .hashtag:hover {
+      border-color: var(--accent);
+    }
+
+    .hashtag input {
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .hashtag.selected {
+      background: rgba(139, 92, 246, 0.15);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .hashtag .count {
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    .articles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+    }
+
+    .article {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+
+    .article:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+    }
+
+    .article-title {
+      margin: 0;
+      font-size: 1.1rem;
+      line-height: 1.35;
+    }
+
+    .article-title a {
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .article-title a:hover {
+      color: var(--accent);
+    }
+
+    .article-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin-top: auto;
+    }
+
+    .author-pic {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+
+    .author-name {
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+
+    .timestamp {
+      margin-left: auto;
+      font-size: 0.8rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .article-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+
+    .article-tag {
+      font-size: 0.75rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .skeleton {
+      animation: shimmer 1.5s infinite;
+      background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%);
+      background-size: 200% 100%;
+      border-radius: 6px;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 3rem 1rem;
+      grid-column: 1 / -1;
+    }
+
+    .error-box {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      padding: 1rem;
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+      grid-column: 1 / -1;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Nostr Long-Form Reader</h1>
+    <p>Latest kind:30023 articles from the Nostr network</p>
+    <div class="status" id="status">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Connecting to relays…</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="controls">
+      <div id="result-count">0 articles</div>
+      <div class="mode-toggle" id="mode-toggle">
+        <button data-mode="OR" class="active">OR</button>
+        <button data-mode="AND">AND</button>
+      </div>
+    </div>
+
+    <div class="hashtags" id="hashtags"></div>
+
+    <div class="articles" id="articles">
+      <div class="empty">Loading articles from relays…</div>
+    </div>
+  </main>
+
+  <script>
+    const RELAYS = [
+      'wss://nos.lol',
+      'wss://relay.snort.social',
+      'wss://nostr.mom',
+      'wss://relay.damus.io',
+      'wss://relay.nostr.band'
+    ];
+
+    const TARGET = 21;
+    const KIND_LONG_FORM = 30023;
+    const KIND_METADATA = 0;
+
+    const state = {
+      articles: new Map(),
+      authors: new Map(),
+      hashtagCounts: new Map(),
+      selected: new Set(),
+      mode: 'OR',
+      activeRelays: 0,
+      failedRelays: 0,
+      eoseReceived: 0
+    };
+
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+
+    function setStatus(text, type = 'loading') {
+      $('#status-text').textContent = text;
+      const dot = $('#status-dot');
+      dot.className = 'status-dot';
+      if (type === 'connected') dot.classList.add('connected');
+      if (type === 'error') dot.classList.add('error');
+    }
+
+    function normalizeHashtag(t) {
+      return t.toLowerCase().trim();
+    }
+
+    function getTagValue(event, name) {
+      const tag = event.tags.find(t => t[0] === name);
+      return tag ? tag[1] : undefined;
+    }
+
+    function getHashtags(event) {
+      return event.tags
+        .filter(t => t[0] === 't' && t[1])
+        .map(t => normalizeHashtag(t[1]));
+    }
+
+    function getTitle(event) {
+      return getTagValue(event, 'title')
+        || (event.content ? event.content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 120) : 'Untitled article');
+    }
+
+    function formatDate(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    function npub(pubkey) {
+      // Simple bech32 not available without deps; show hex prefix.
+      return pubkey.slice(0, 12) + '…' + pubkey.slice(-6);
+    }
+
+    function updateCounts() {
+      state.hashtagCounts.clear();
+      for (const article of state.articles.values()) {
+        for (const tag of getHashtags(article)) {
+          state.hashtagCounts.set(tag, (state.hashtagCounts.get(tag) || 0) + 1);
+        }
+      }
+    }
+
+    function renderHashtags() {
+      const container = $('#hashtags');
+      const sorted = [...state.hashtagCounts.entries()].sort((a, b) => b[1] - a[1]);
+      container.innerHTML = '';
+
+      for (const [tag, count] of sorted) {
+        const label = document.createElement('label');
+        label.className = 'hashtag' + (state.selected.has(tag) ? ' selected' : '');
+        const checked = state.selected.has(tag) ? 'checked' : '';
+        label.innerHTML = `<input type="checkbox" value="${escapeHtml(tag)}" ${checked}> #${escapeHtml(tag)} <span class="count">${count}</span>`;
+        label.querySelector('input').addEventListener('change', (e) => {
+          if (e.target.checked) state.selected.add(tag);
+          else state.selected.delete(tag);
+          renderHashtags();
+          renderArticles();
+        });
+        container.appendChild(label);
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function authorHtml(pubkey) {
+      const meta = state.authors.get(pubkey) || {};
+      const name = meta.display_name || meta.name || npub(pubkey);
+      const pic = meta.picture;
+      const img = pic
+        ? `<img class="author-pic" src="${escapeHtml(pic)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="author-pic" style="display:flex;align-items:center;justify-content:center;font-size:0.7rem;background:var(--surface-2);color:var(--muted);">${escapeHtml(name.slice(0, 2).toUpperCase())}</div>`;
+      return `${img}<span class="author-name">${escapeHtml(name)}</span>`;
+    }
+
+    function articleMatches(article) {
+      if (state.selected.size === 0) return true;
+      const tags = new Set(getHashtags(article));
+      if (state.mode === 'AND') {
+        return [...state.selected].every(t => tags.has(t));
+      }
+      return [...state.selected].some(t => tags.has(t));
+    }
+
+    function renderArticles() {
+      const container = $('#articles');
+      const filtered = [...state.articles.values()].filter(articleMatches);
+      $('#result-count').textContent = `${filtered.length} article${filtered.length === 1 ? '' : 's'}`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty">No articles match the selected hashtags.</div>';
+        return;
+      }
+
+      container.innerHTML = filtered.map(article => {
+        const title = getTitle(article);
+        const tags = getHashtags(article);
+        const tagHtml = tags.length
+          ? `<div class="article-tags">${tags.map(t => `<span class="article-tag">#${escapeHtml(t)}</span>`).join('')}</div>`
+          : '';
+        const neventOrNaddr = `https://njump.me/${article.id}`;
+        return `
+          <article class="article">
+            <h2 class="article-title"><a href="${neventOrNaddr}" target="_blank" rel="noopener">${escapeHtml(title)}</a></h2>
+            ${tagHtml}
+            <div class="article-meta">
+              ${authorHtml(article.pubkey)}
+              <time class="timestamp" datetime="${new Date(article.created_at * 1000).toISOString()}">${formatDate(article.created_at)}</time>
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function maybeDone() {
+      updateCounts();
+      renderHashtags();
+      renderArticles();
+    }
+
+    function connectRelay(url) {
+      return new Promise((resolve) => {
+        let closed = false;
+        const ws = new WebSocket(url);
+        ws.onopen = () => {
+          state.activeRelays++;
+          setStatus(`Connected to ${state.activeRelays} relay${state.activeRelays === 1 ? '' : 's'}`, 'connected');
+          const subId = 'articles-' + Math.random().toString(36).slice(2, 10);
+          ws.send(JSON.stringify(['REQ', subId, { kinds: [KIND_LONG_FORM], limit: TARGET }]));
+        };
+
+        ws.onmessage = (e) => {
+          let msg;
+          try { msg = JSON.parse(e.data); } catch { return; }
+          if (!Array.isArray(msg) || msg.length < 2) return;
+          const [type, subId, payload] = msg;
+          if (type === 'EVENT' && payload && payload.kind === KIND_LONG_FORM) {
+            if (!state.articles.has(payload.id)) {
+              state.articles.set(payload.id, payload);
+              if (state.articles.size >= TARGET) {
+                // We have enough; close this relay's subscription but keep connection for metadata.
+                ws.send(JSON.stringify(['CLOSE', subId]));
+                fetchMissingAuthors();
+                maybeDone();
+              } else {
+                fetchMissingAuthors();
+                maybeDone();
+              }
+            }
+          } else if (type === 'EVENT' && payload && payload.kind === KIND_METADATA) {
+            try {
+              const meta = JSON.parse(payload.content);
+              state.authors.set(payload.pubkey, meta);
+              renderArticles();
+            } catch {}
+          } else if (type === 'EOSE') {
+            state.eoseReceived++;
+            if (state.articles.size < TARGET) {
+              setStatus(`Found ${state.articles.size} of ${TARGET} articles…`, 'loading');
+            }
+            if (state.eoseReceived === RELAYS.length) {
+              fetchMissingAuthors();
+              maybeDone();
+              if (state.articles.size === 0) setStatus('No articles found.', 'error');
+            }
+          }
+        };
+
+        ws.onerror = () => {
+          if (!closed) {
+            state.failedRelays++;
+            setStatus(`Relay error (${state.failedRelays} failed)`, 'error');
+          }
+        };
+
+        ws.onclose = () => {
+          closed = true;
+          state.activeRelays = Math.max(0, state.activeRelays - 1);
+        };
+
+        // Give up on this relay after 10s.
+        setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CLOSING) {
+            ws.close();
+            state.failedRelays++;
+            resolve();
+          }
+        }, 10000);
+      });
+    }
+
+    function fetchMissingAuthors() {
+      const pubkeys = [...state.articles.values()]
+        .map(a => a.pubkey)
+        .filter(pk => !state.authors.has(pk));
+      if (pubkeys.length === 0) return;
+      requestFromAllRelays({ kinds: [KIND_METADATA], authors: pubkeys });
+    }
+
+    function requestFromAllRelays(filter) {
+      for (const url of RELAYS) {
+        try {
+          const ws = new WebSocket(url);
+          const subId = 'meta-' + Math.random().toString(36).slice(2, 10);
+          ws.onopen = () => ws.send(JSON.stringify(['REQ', subId, filter]));
+          ws.onmessage = (e) => {
+            let msg;
+            try { msg = JSON.parse(e.data); } catch { return; }
+            if (msg[0] === 'EVENT' && msg[2] && msg[2].kind === KIND_METADATA) {
+              try {
+                const meta = JSON.parse(msg[2].content);
+                state.authors.set(msg[2].pubkey, meta);
+                renderArticles();
+              } catch {}
+            }
+          };
+          setTimeout(() => ws.close(), 8000);
+        } catch {}
+      }
+    }
+
+    $('#mode-toggle').addEventListener('click', (e) => {
+      if (e.target.tagName !== 'BUTTON') return;
+      $$('#mode-toggle button').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      state.mode = e.target.dataset.mode;
+      renderArticles();
+    });
+
+    // Start
+    Promise.all(RELAYS.map(connectRelay)).then(() => {
+      fetchMissingAuthors();
+      maybeDone();
+      if (state.articles.size > 0) {
+        setStatus(`Loaded ${state.articles.size} articles from ${state.eoseReceived} relay${state.eoseReceived === 1 ? '' : 's'}`, 'connected');
+      }
+    });
+
+    // Retry metadata fetch after a few seconds for slow relays.
+    setTimeout(() => {
+      fetchMissingAuthors();
+      renderArticles();
+    }, 5000);
+  </script>
+</body>
+</html>

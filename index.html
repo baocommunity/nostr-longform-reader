@@ -322,7 +322,10 @@
       mode: 'OR',
       activeRelays: 0,
       failedRelays: 0,
-      eoseReceived: 0
+      eoseReceived: 0,
+      sockets: [],
+      collecting: true,
+      finished: false
     };
 
     const $ = (sel) => document.querySelector(sel);
@@ -352,8 +355,19 @@
     }
 
     function getTitle(event) {
-      return getTagValue(event, 'title')
-        || (event.content ? event.content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 120) : 'Untitled article');
+      const fromTag = getTagValue(event, 'title');
+      if (fromTag) return fromTag;
+      if (!event.content) return 'Untitled article';
+      const lines = event.content.split('\n').map(l => l.trim()).filter(Boolean);
+      const bech32ish = /^n(pub|ote|event|addr|profile)1[\w]+$/;
+      for (const line of lines) {
+        const cleaned = line.replace(/^#+\s*/, '');
+        if (cleaned.length > 120) continue;
+        if (cleaned.length > 40 && !cleaned.includes(' ')) continue;
+        if (bech32ish.test(cleaned)) continue;
+        return cleaned.slice(0, 120);
+      }
+      return 'Untitled article';
     }
 
     function formatDate(ts) {
@@ -448,16 +462,40 @@
       }).join('');
     }
 
+    function finalizeArticles() {
+      // Keep only the TARGET most recent articles.
+      const sorted = [...state.articles.values()].sort((a, b) => b.created_at - a.created_at);
+      state.articles.clear();
+      for (const article of sorted.slice(0, TARGET)) {
+        state.articles.set(article.id, article);
+      }
+    }
+
     function maybeDone() {
+      finalizeArticles();
       updateCounts();
       renderHashtags();
       renderArticles();
+    }
+
+    function finishCollection() {
+      if (state.finished) return;
+      state.finished = true;
+      state.collecting = false;
+      for (const ws of state.sockets) {
+        try { ws.close(); } catch {}
+      }
+      maybeDone();
+      fetchMissingAuthors();
+      setStatus(`Loaded ${state.articles.size} article${state.articles.size === 1 ? '' : 's'}`, state.articles.size ? 'connected' : 'error');
     }
 
     function connectRelay(url) {
       return new Promise((resolve) => {
         let closed = false;
         const ws = new WebSocket(url);
+        state.sockets.push(ws);
+
         ws.onopen = () => {
           state.activeRelays++;
           setStatus(`Connected to ${state.activeRelays} relay${state.activeRelays === 1 ? '' : 's'}`, 'connected');
@@ -466,38 +504,23 @@
         };
 
         ws.onmessage = (e) => {
+          if (!state.collecting) return;
           let msg;
           try { msg = JSON.parse(e.data); } catch { return; }
           if (!Array.isArray(msg) || msg.length < 2) return;
-          const [type, subId, payload] = msg;
+          const [type, , payload] = msg;
           if (type === 'EVENT' && payload && payload.kind === KIND_LONG_FORM) {
             if (!state.articles.has(payload.id)) {
               state.articles.set(payload.id, payload);
+              setStatus(`Found ${state.articles.size} of ${TARGET} articles…`, 'loading');
               if (state.articles.size >= TARGET) {
-                // We have enough; close this relay's subscription but keep connection for metadata.
-                ws.send(JSON.stringify(['CLOSE', subId]));
-                fetchMissingAuthors();
-                maybeDone();
-              } else {
-                fetchMissingAuthors();
-                maybeDone();
+                finishCollection();
               }
             }
-          } else if (type === 'EVENT' && payload && payload.kind === KIND_METADATA) {
-            try {
-              const meta = JSON.parse(payload.content);
-              state.authors.set(payload.pubkey, meta);
-              renderArticles();
-            } catch {}
           } else if (type === 'EOSE') {
             state.eoseReceived++;
-            if (state.articles.size < TARGET) {
-              setStatus(`Found ${state.articles.size} of ${TARGET} articles…`, 'loading');
-            }
-            if (state.eoseReceived === RELAYS.length) {
-              fetchMissingAuthors();
-              maybeDone();
-              if (state.articles.size === 0) setStatus('No articles found.', 'error');
+            if (state.eoseReceived >= RELAYS.length - state.failedRelays) {
+              finishCollection();
             }
           }
         };
@@ -505,23 +528,22 @@
         ws.onerror = () => {
           if (!closed) {
             state.failedRelays++;
-            setStatus(`Relay error (${state.failedRelays} failed)`, 'error');
           }
         };
 
         ws.onclose = () => {
           closed = true;
           state.activeRelays = Math.max(0, state.activeRelays - 1);
+          resolve();
         };
 
-        // Give up on this relay after 10s.
         setTimeout(() => {
           if (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CLOSING) {
             ws.close();
             state.failedRelays++;
             resolve();
           }
-        }, 10000);
+        }, 8000);
       });
     }
 
@@ -565,18 +587,19 @@
 
     // Start
     Promise.all(RELAYS.map(connectRelay)).then(() => {
-      fetchMissingAuthors();
-      maybeDone();
-      if (state.articles.size > 0) {
-        setStatus(`Loaded ${state.articles.size} articles from ${state.eoseReceived} relay${state.eoseReceived === 1 ? '' : 's'}`, 'connected');
-      }
+      finishCollection();
     });
+
+    // Hard cutoff to ensure we don't wait forever.
+    setTimeout(() => {
+      finishCollection();
+    }, 15000);
 
     // Retry metadata fetch after a few seconds for slow relays.
     setTimeout(() => {
       fetchMissingAuthors();
       renderArticles();
-    }, 5000);
+    }, 6000);
   </script>
 </body>
 </html>

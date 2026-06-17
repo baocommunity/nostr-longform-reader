@@ -308,6 +308,34 @@
       opacity: 1;
     }
 
+    .article-image {
+      margin: -1.5rem -1.5rem 0;
+      height: 140px;
+      border-radius: var(--radius) var(--radius) 0 0;
+      overflow: hidden;
+      position: relative;
+      background: var(--surface-2);
+    }
+
+    .article-image::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 60%, rgba(8,8,9,0.55) 100%);
+      pointer-events: none;
+    }
+
+    .article-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.4s ease;
+    }
+
+    .article:hover .article-image img {
+      transform: scale(1.04);
+    }
+
     .article-title {
       margin: 0;
       font-size: 1.15rem;
@@ -536,6 +564,19 @@
       return 'Untitled article';
     }
 
+    function getImage(event) {
+      const fromTag = getTagValue(event, 'image');
+      if (fromTag) return fromTag;
+      if (!event.content) return null;
+      // Markdown image syntax
+      const mdMatch = event.content.match(/!\[([^\]]*)\]\((https?:\/\/[^\s\)]+)\)/);
+      if (mdMatch) return mdMatch[2];
+      // Plain image URL
+      const urlMatch = event.content.match(/(https?:\/\/[^\s\)\"]+\.(?:jpg|jpeg|png|gif|webp|avif|svg))/i);
+      if (urlMatch) return urlMatch[1];
+      return null;
+    }
+
     function formatDate(ts) {
       const d = new Date(ts * 1000);
       return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
@@ -623,6 +664,10 @@
 
       container.innerHTML = filtered.map(article => {
         const title = getTitle(article);
+        const image = getImage(article);
+        const imageHtml = image
+          ? `<div class="article-image"><img src="${escapeHtml(image)}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
+          : '';
         const tags = getHashtags(article);
         const MAX_TAGS = 7;
         const visibleTags = tags.slice(0, MAX_TAGS);
@@ -633,6 +678,7 @@
         const neventOrNaddr = `https://njump.me/${article.id}`;
         return `
           <article class="article">
+            ${imageHtml}
             <h2 class="article-title"><a href="${neventOrNaddr}" target="_blank" rel="noopener">${escapeHtml(title)}</a></h2>
             ${tagHtml}
             <div class="article-meta">
